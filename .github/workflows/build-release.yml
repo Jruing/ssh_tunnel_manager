@@ -220,14 +220,6 @@ jobs:
         else
           NOTES="Release $VERSION
 
-
-
-For detailed usage instructions, see README.md and README_CN.md."
-        fi
-
-        # Save notes to file for multiline output
-        echo "$NOTES" > release_notes.txt
-
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
