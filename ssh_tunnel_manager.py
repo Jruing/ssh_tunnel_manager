@@ -53,6 +53,28 @@ class API:
             return {"success": True, "config": config}
         return result
 
+    def update_config(self, config):
+        """更新配置"""
+        configs = self.load_configs()
+        for i, c in enumerate(configs):
+            if c.get("id") == config.get("id"):
+                # 保留状态
+                config["status"] = c.get("status", "stopped")
+                configs[i] = config
+                result = self.save_configs(configs)
+                if result.get("success"):
+                    return {"success": True, "config": config}
+                return result
+        return {"success": False, "error": "配置不存在"}
+
+    def get_config(self, config_id):
+        """获取单个配置"""
+        configs = self.load_configs()
+        config = next((c for c in configs if c.get("id") == config_id), None)
+        if config:
+            return {"success": True, "config": config}
+        return {"success": False, "error": "配置不存在"}
+
     def delete_config(self, config_id):
         """删除配置"""
         configs = self.load_configs()
@@ -68,37 +90,37 @@ class API:
             return {"success": False, "error": "配置不存在"}
 
         try:
-            # 构建 SSH 命令
+            # 构建 SSH 命令 - 修复参数分割问题
             tunnel_type = config.get("tunnel_type", "local")
-            if tunnel_type == "local":
-                port_arg = (
-                    f"-L {config['local_port']}:"
-                    f"localhost:{config['remote_port']}"
-                )
-            elif tunnel_type == "remote":
-                port_arg = (
-                    f"-R {config['remote_port']}:"
-                    f"localhost:{config['local_port']}"
-                )
-            else:  # dynamic
-                port_arg = f"-D {config['local_port']}"
+            ssh_cmd = ["ssh", "-N", "-f"]
 
-            ssh_cmd = [
-                "ssh",
-                "-N",
-                "-f",
-                port_arg,
-                f"{config['username']}@{config['host']}",
+            # 添加端口转发参数
+            if tunnel_type == "local":
+                ssh_cmd.extend([
+                    "-L",
+                    f"{config['local_port']}:localhost:{config['remote_port']}",
+                ])
+            elif tunnel_type == "remote":
+                ssh_cmd.extend([
+                    "-R",
+                    f"{config['remote_port']}:localhost:{config['local_port']}",
+                ])
+            else:  # dynamic
+                ssh_cmd.extend(["-D", str(config["local_port"])])
+
+            # 添加主机和端口
+            ssh_cmd.extend([
                 "-p",
                 str(config.get("port", 22)),
-            ]
+                f"{config['username']}@{config['host']}",
+            ])
 
             # 添加密钥文件或密码认证
             auth_type = config.get("auth_type", "password")
             if auth_type == "key" and config.get("key_path"):
                 ssh_cmd.extend(["-i", config["key_path"]])
 
-            cmd_str = ' '.join(ssh_cmd)
+            cmd_str = " ".join(ssh_cmd)
             print(f"执行命令: {cmd_str}")
 
             # 启动 SSH 进程
@@ -113,7 +135,7 @@ class API:
 
             return {
                 "success": True,
-                "message": f"SSH 隧道已启动\n命令: {cmd_str}"
+                "message": f"SSH 隧道已启动\n命令: {cmd_str}",
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -141,7 +163,7 @@ class API:
     def stop_all_tunnels(self):
         """停止所有 SSH 隧道"""
         print("正在停止所有 SSH 隧道...")
-        
+
         # 终止所有活动进程
         for config_id, process in list(self.active_processes.items()):
             try:
@@ -149,15 +171,15 @@ class API:
                 print(f"已停止隧道 ID: {config_id}")
             except Exception as e:
                 print(f"停止隧道 {config_id} 时出错: {e}")
-        
+
         self.active_processes.clear()
-        
+
         # 更新所有配置状态为停止
         configs = self.load_configs()
         for c in configs:
             c["status"] = "stopped"
         self.save_configs(configs)
-        
+
         print("所有隧道已停止")
 
 
@@ -307,9 +329,153 @@ HTML_CONTENT = """
             background: #e0a800;
         }
 
+        .btn-info {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #138496;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn:disabled:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
         .config-list {
             max-height: 500px;
             overflow-y: auto;
+        }
+
+        /* 模态框样式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.3s;
+        }
+
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            animation: slideUp 0.3s;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1e3c72;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #6c757d;
+            line-height: 1;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+        }
+
+        .modal-close:hover {
+            color: #dc3545;
+        }
+
+        .modal-body {
+            margin-bottom: 20px;
+        }
+
+        .detail-group {
+            margin-bottom: 15px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+
+        .detail-value {
+            color: #212529;
+            font-size: 14px;
+            word-break: break-all;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .button-group .btn {
+            flex: 1;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
 
         .config-item {
@@ -438,8 +604,10 @@ HTML_CONTENT = """
 
         <div class="content">
             <div class="form-section">
-                <div class="section-title">➕ 添加新配置</div>
+                <div class="section-title" id="formTitle">➕ 添加新配置</div>
                 <form id="configForm">
+                    <input type="hidden" id="config_id">
+                    
                     <div class="form-group">
                         <label for="tunnel_name">隧道名称</label>
                         <input type="text" id="tunnel_name" placeholder="例如: MySQL-Tunnel" required>
@@ -502,7 +670,10 @@ HTML_CONTENT = """
                         <input type="number" id="remote_port" placeholder="例如: 3306">
                     </div>
                     
-                    <button type="submit" class="btn btn-primary">💾 保存配置</button>
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary" id="submitBtn">💾 保存配置</button>
+                        <button type="button" class="btn btn-secondary" id="cancelBtn" style="display: none;" onclick="cancelEdit()">✖️ 取消</button>
+                    </div>
                 </form>
             </div>
 
@@ -520,9 +691,22 @@ HTML_CONTENT = """
         </div>
     </div>
 
+    <!-- 详情模态框 -->
+    <div class="modal" id="detailModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">👁️ 配置详情</div>
+                <button class="modal-close" onclick="closeDetailModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="detailContent">
+            </div>
+        </div>
+    </div>
+
     <script>
         // 初始化
         let configs = [];
+        let editingConfigId = null;
 
         // 页面加载时获取配置
         window.addEventListener('pywebviewready', function() {
@@ -613,11 +797,13 @@ HTML_CONTENT = """
                             <div>🔄 ${tunnelTypeText}: ${config.local_port}${config.remote_port ? ' → ' + config.remote_port : ''}</div>
                         </div>
                         <div class="config-actions">
-                            ${isRunning 
+                            ${isRunning
                                 ? `<button class="btn btn-warning" onclick="stopTunnel(${config.id})">⏸️ 停止</button>`
                                 : `<button class="btn btn-success" onclick="startTunnel(${config.id})">▶️ 启动</button>`
                             }
-                            <button class="btn btn-danger" onclick="deleteConfig(${config.id})">🗑️ 删除</button>
+                            <button class="btn btn-info" onclick="showDetail(${config.id})">👁️ 详情</button>
+                            <button class="btn btn-primary" onclick="editConfig(${config.id})" ${isRunning ? 'disabled' : ''}>✏️ 编辑</button>
+                            <button class="btn btn-danger" onclick="deleteConfig(${config.id})" ${isRunning ? 'disabled' : ''}>🗑️ 删除</button>
                         </div>
                     </div>
                 `;
@@ -646,17 +832,197 @@ HTML_CONTENT = """
             };
 
             try {
-                const result = await pywebview.api.add_config(config);
-                if (result.success) {
-                    showToast('配置添加成功', 'success');
-                    this.reset();
-                    await loadConfigs();
+                let result;
+                if (editingConfigId) {
+                    // 编辑模式
+                    config.id = editingConfigId;
+                    result = await pywebview.api.update_config(config);
+                    if (result.success) {
+                        showToast('配置更新成功', 'success');
+                        cancelEdit();
+                        await loadConfigs();
+                    } else {
+                        showToast('更新失败: ' + result.error, 'error');
+                    }
                 } else {
-                    showToast('添加失败: ' + result.error, 'error');
+                    // 添加模式
+                    result = await pywebview.api.add_config(config);
+                    if (result.success) {
+                        showToast('配置添加成功', 'success');
+                        this.reset();
+                        await loadConfigs();
+                    } else {
+                        showToast('添加失败: ' + result.error, 'error');
+                    }
                 }
             } catch (error) {
-                showToast('添加配置失败', 'error');
+                showToast('操作失败', 'error');
                 console.error(error);
+            }
+        });
+
+        // 编辑配置
+        async function editConfig(id) {
+            try {
+                const result = await pywebview.api.get_config(id);
+                if (result.success) {
+                    const config = result.config;
+                    editingConfigId = id;
+                    
+                    // 更新表单标题
+                    document.getElementById('formTitle').textContent = '✏️ 编辑配置';
+                    document.getElementById('submitBtn').textContent = '💾 更新配置';
+                    document.getElementById('cancelBtn').style.display = 'block';
+                    
+                    // 填充表单数据
+                    document.getElementById('config_id').value = config.id;
+                    document.getElementById('tunnel_name').value = config.tunnel_name || '';
+                    document.getElementById('name').value = config.name || '';
+                    document.getElementById('host').value = config.host || '';
+                    document.getElementById('port').value = config.port || 22;
+                    document.getElementById('username').value = config.username || '';
+                    document.getElementById('auth_type').value = config.auth_type || 'password';
+                    document.getElementById('tunnel_type').value = config.tunnel_type || 'local';
+                    document.getElementById('local_port').value = config.local_port || '';
+                    document.getElementById('remote_port').value = config.remote_port || '';
+                    
+                    // 根据认证方式显示对应字段
+                    if (config.auth_type === 'key') {
+                        document.getElementById('key_path').value = config.key_path || '';
+                        document.getElementById('password_group').style.display = 'none';
+                        document.getElementById('key_path_group').style.display = 'block';
+                    } else {
+                        document.getElementById('password').value = config.password || '';
+                        document.getElementById('password_group').style.display = 'block';
+                        document.getElementById('key_path_group').style.display = 'none';
+                    }
+                    
+                    // 根据转发类型显示远程端口字段
+                    if (config.tunnel_type === 'dynamic') {
+                        document.getElementById('remote_port_group').style.display = 'none';
+                    } else {
+                        document.getElementById('remote_port_group').style.display = 'block';
+                    }
+                    
+                    // 滚动到表单顶部
+                    document.querySelector('.form-section').scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    showToast('获取配置失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showToast('获取配置失败', 'error');
+                console.error(error);
+            }
+        }
+
+        // 取消编辑
+        function cancelEdit() {
+            editingConfigId = null;
+            document.getElementById('formTitle').textContent = '➕ 添加新配置';
+            document.getElementById('submitBtn').textContent = '💾 保存配置';
+            document.getElementById('cancelBtn').style.display = 'none';
+            document.getElementById('configForm').reset();
+            document.getElementById('config_id').value = '';
+            
+            // 重置认证方式和转发类型显示
+            document.getElementById('password_group').style.display = 'block';
+            document.getElementById('key_path_group').style.display = 'none';
+            document.getElementById('remote_port_group').style.display = 'block';
+        }
+
+        // 显示配置详情
+        async function showDetail(id) {
+            try {
+                const result = await pywebview.api.get_config(id);
+                if (result.success) {
+                    const config = result.config;
+                    const isRunning = config.status === 'running';
+                    const statusClass = isRunning ? 'status-running' : 'status-stopped';
+                    const statusText = isRunning ? '运行中' : '已停止';
+                    
+                    const tunnelTypeText = {
+                        'local': '本地转发 (-L)',
+                        'remote': '远程转发 (-R)',
+                        'dynamic': '动态转发 (-D)'
+                    }[config.tunnel_type];
+                    
+                    const authTypeText = config.auth_type === 'key' ? '密钥认证' : '密码认证';
+                    const authValue = config.auth_type === 'key'
+                        ? (config.key_path || '未设置')
+                        : '••••••••';
+                    
+                    const portMapping = config.tunnel_type === 'dynamic'
+                        ? `本地端口: ${config.local_port} (SOCKS代理)`
+                        : `${config.local_port} → ${config.remote_port}`;
+                    
+                    document.getElementById('detailContent').innerHTML = `
+                        <div class="detail-group">
+                            <div class="detail-label">隧道名称</div>
+                            <div class="detail-value">${config.tunnel_name || '未设置'}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">配置名称</div>
+                            <div class="detail-value">${config.name}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">运行状态</div>
+                            <div class="detail-value">
+                                <span class="config-status ${statusClass}">${statusText}</span>
+                            </div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">服务器地址</div>
+                            <div class="detail-value">${config.host}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">SSH 端口</div>
+                            <div class="detail-value">${config.port}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">用户名</div>
+                            <div class="detail-value">${config.username}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">认证方式</div>
+                            <div class="detail-value">${authTypeText}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">${config.auth_type === 'key' ? '密钥路径' : '密码'}</div>
+                            <div class="detail-value">${authValue}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">转发类型</div>
+                            <div class="detail-value">${tunnelTypeText}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">端口映射</div>
+                            <div class="detail-value">${portMapping}</div>
+                        </div>
+                        <div class="detail-group">
+                            <div class="detail-label">配置 ID</div>
+                            <div class="detail-value">${config.id}</div>
+                        </div>
+                    `;
+                    
+                    document.getElementById('detailModal').classList.add('show');
+                } else {
+                    showToast('获取配置失败: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showToast('获取配置失败', 'error');
+                console.error(error);
+            }
+        }
+
+        // 关闭详情模态框
+        function closeDetailModal() {
+            document.getElementById('detailModal').classList.remove('show');
+        }
+
+        // 点击模态框背景关闭
+        document.getElementById('detailModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeDetailModal();
             }
         });
 
@@ -733,16 +1099,16 @@ HTML_CONTENT = """
 def main():
     """主函数"""
     api = API()
-    
+
     # 注册退出时的清理函数
     def cleanup():
         """程序退出时的清理"""
         print("程序即将退出，正在清理资源...")
         api.stop_all_tunnels()
         print("资源清理完成")
-    
+
     atexit.register(cleanup)
-    
+
     webview.create_window(
         title="SSH 端口转发配置管理",
         html=HTML_CONTENT,
@@ -751,9 +1117,9 @@ def main():
         height=700,
         resizable=True,
     )
-    
+
     webview.start()
-    
+
     # webview.start() 阻塞直到所有窗口关闭
     # 窗口关闭后会自动触发 atexit 注册的清理函数
 
